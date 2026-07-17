@@ -1,0 +1,24 @@
+# Ignore environment variables / secrets
+.env
+**/.env
+
+# Ignore virtual environments
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore local databases and user uploads containing sensitive data
+users_db.json
+**/users_db.json
+user_uploads/
+**/user_uploads/
+
+# Ignore IDE configs
+.vscode/
+.idea/

@@ -12,7 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import io
 from pathlib import Path
 import re
-from streamlit_frontend import show_auth_page, show_user_sidebar, update_user_resumes, get_user_data
+from auth import show_auth_page, show_user_sidebar, update_user_resumes, get_user_data
 
 
 # ------------------ CONFIG ------------------

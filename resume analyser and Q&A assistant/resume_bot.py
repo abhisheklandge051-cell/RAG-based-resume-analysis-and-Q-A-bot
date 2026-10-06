@@ -364,26 +364,33 @@ def retrieve_context(question, chunks, index, k=3):
     
     return context[:4000]
 
-def ask_groq(question, context):
-    """Get response from Groq API"""
-    if not context.strip():
-        return "I couldn't find relevant information in your resume to answer that question. Please try asking something else."
+def ask_groq(question, context="", chat_history=None):
+    """Get response from Groq API - answers all user queries without restricting to resume only"""
     
-    prompt = f"""
-You are an intelligent Resume Assistant.
-
-Resume Context:
-{context}
-
-Question:
-{question}
-
-Instructions:
-- Answer only from the resume context provided above.
-- If information is not in the context, say: "This information is not available in the provided resume."
-- Be specific and detailed when information is available.
-- Keep answers professional and concise.
-"""
+    system_instruction = (
+        "You are an intelligent, helpful AI Assistant and Career Advisor.\n\n"
+        "Guidelines:\n"
+        "1. You are fully capable and responsible for answering ANY query from the user (technical topics, career guidance, interview preparation, coding, general knowledge, explanations, writing help, etc.).\n"
+        "2. Do NOT restrict your answers only to the resume.\n"
+        "3. When relevant candidate resume context is provided below, use it to personalize answers, discuss qualifications, skills, and experience, or provide tailored career recommendations.\n"
+        "4. If the user asks a question not covered by the resume, or if no resume is loaded, use your broad general knowledge to provide a comprehensive, accurate, and helpful response.\n"
+        "5. If the user asks for a specific personal fact that is absent from their resume (e.g., 'What is my GPA?' or 'What is my phone number?'), clarify politely that this specific detail is not found in the uploaded resume, while still providing helpful related information or suggestions.\n"
+        "6. Keep responses well-structured, professional, and clear."
+    )
+    
+    if context and context.strip():
+        system_instruction += f"\n\n--- Candidate Resume Context ---\n{context.strip()}\n--------------------------------"
+    
+    api_messages = [{"role": "system", "content": system_instruction}]
+    
+    # Include recent conversation turns for context continuity
+    if chat_history:
+        past_turns = chat_history[:-1] if chat_history and chat_history[-1].get("content") == question else chat_history
+        for msg in past_turns[-6:]:
+            if msg.get("role") in ["user", "assistant"] and msg.get("content"):
+                api_messages.append({"role": msg["role"], "content": msg["content"]})
+                
+    api_messages.append({"role": "user", "content": question})
 
     max_retries = 3
     retry_delay = 2
@@ -391,10 +398,10 @@ Instructions:
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=500
+                model="openai/gpt-oss-120b",
+                messages=api_messages,
+                temperature=0.4,
+                max_tokens=1000
             )
 
             if response.choices and response.choices[0].message.content:
@@ -533,7 +540,7 @@ if st.session_state.selected_resume_idx is not None and not st.session_state.pro
                         st.session_state.resume_uploaded = True
                         
                         # Welcome message
-                        welcome_msg = f"👋 Hello {st.session_state.user_name}! I've loaded your resume '{resume_info['filename']}'. Feel free to ask me about your experience, skills, education, or any other details."
+                        welcome_msg = f"👋 Hello {st.session_state.user_name}! I've loaded your resume '{resume_info['filename']}'. Feel free to ask me anything about your experience, skills, education, career guidance, interview prep, or any other topic!"
                         st.session_state.messages = [{"role": "assistant", "content": welcome_msg}]
                         
                         st.success(f"✅ Loaded resume: {resume_info['filename']}")
@@ -635,7 +642,7 @@ if is_new_upload and not st.session_state.processing:
                 st.session_state.resume_uploaded = True
                 
                 # Welcome message
-                welcome_msg = f"👋 Hello {st.session_state.user_name}! I've analyzed your resume. Feel free to ask me about your experience, skills, education, or any other details."
+                welcome_msg = f"👋 Hello {st.session_state.user_name}! I've analyzed your resume. Feel free to ask me anything about your experience, skills, education, career guidance, interview prep, or any other topic!"
                 st.session_state.messages = [{"role": "assistant", "content": welcome_msg}]
                 
                 st.success("✅ Resume processing complete!")
@@ -653,42 +660,58 @@ if is_new_upload and not st.session_state.processing:
     st.session_state.processing = False
 
 # ------------------ CHAT INTERFACE ------------------
-if st.session_state.resume_uploaded:
-    # Display chat messages
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+# Initialize greeting if chat is empty
+if not st.session_state.messages:
+    if st.session_state.resume_uploaded:
+        welcome_greeting = f"👋 Hello {st.session_state.user_name}! Your resume is loaded. Feel free to ask me anything about your background, career advice, interview questions, technical concepts, or any general topic."
+    else:
+        welcome_greeting = f"👋 Hello {st.session_state.user_name}! I am your AI assistant. You can ask me any question, or upload your resume above for personalized analysis and guidance."
+    st.session_state.messages = [{"role": "assistant", "content": welcome_greeting}]
+
+# Information notice if no resume is currently loaded
+if not st.session_state.resume_uploaded:
+    st.info("💡 **Tip:** No resume uploaded yet. You can ask any questions right away, or upload a resume above for personalized analysis!")
+
+# Display chat messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+
+# Chat input
+input_placeholder = (
+    "Ask anything about your resume, career advice, technical concepts, or any question..."
+    if st.session_state.resume_uploaded
+    else "Ask any question, career advice, or upload a resume above..."
+)
+question = st.chat_input(input_placeholder)
+
+if question:
+    # Add user message
+    with st.chat_message("user"):
+        st.write(question)
+    st.session_state.messages.append({"role": "user", "content": question})
     
-    # Chat input
-    question = st.chat_input("Ask anything about your resume...")
-    
-    if question:
-        # Add user message
-        with st.chat_message("user"):
-            st.write(question)
-        st.session_state.messages.append({"role": "user", "content": question})
-        
-        # Get response
-        with st.spinner("🔍 Searching your resume..."):
+    # Retrieve resume context if available
+    context = ""
+    if st.session_state.resume_uploaded and st.session_state.index is not None and st.session_state.chunks:
+        with st.spinner("🔍 Checking resume context..."):
             context = retrieve_context(
                 question,
                 st.session_state.chunks,
                 st.session_state.index,
                 k=3
             )
-            
-            with st.spinner("🤖 Generating response..."):
-                answer = ask_groq(question, context)
-        
-        # Add assistant response
-        with st.chat_message("assistant"):
-            st.write(answer)
-        
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-
-else:
-    st.info("📂 Please upload a PDF or DOCX resume to begin.")
+    
+    # Get response from LLM
+    with st.spinner("🤖 Generating response..."):
+        answer = ask_groq(question, context, st.session_state.messages)
+    
+    # Add assistant response
+    with st.chat_message("assistant"):
+        st.write(answer)
+    
+    st.session_state.messages.append({"role": "assistant", "content": answer})
 
 # ------------------ FOOTER ------------------
 st.markdown("---")
-st.caption("💡 Tip: Ask about skills, experience, education, projects, or any specific details from your resume.")
+st.caption("💡 Tip: Ask about skills, experience, education, career guidance, interview preparation, technical concepts, or any general topic!")
